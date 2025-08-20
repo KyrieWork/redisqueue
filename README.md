@@ -2,8 +2,6 @@
 
 A production-ready Redis Streams consumer/producer with automatic error recovery, message reclaiming, and comprehensive performance monitoring.
 
-**No bullshit. Just rock-solid message processing.**
-
 ## Features
 
 - **Bulletproof Error Handling**: 3-level error classification with rich context
@@ -137,22 +135,6 @@ This library was built for production workloads. It handles:
 - Graceful shutdown with in-flight message completion
 - Comprehensive metrics for monitoring and alerting
 
-## Why This Library?
-
-Most Redis queue libraries are toys. This one is built for real production environments where:
-
-- Messages **cannot** be lost
-- Errors **must** be traceable  
-- Performance **must** be observable
-- Shutdown **must** be graceful
-- Code **must** be maintainable
-
-**"Talk is cheap, show me the code."** - This library shows you production-grade code.
-
 ## License
 
 MIT License. Use it, abuse it, just don't blame us when you realize how much better your infrastructure could be.
-
----
-
-*Built with the philosophy that good software should be reliable, observable, and maintainable. No compromises.*
