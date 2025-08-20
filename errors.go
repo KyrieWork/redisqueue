@@ -24,21 +24,79 @@ func IsGroupExistsError(err error) bool {
 	return errStr == "BUSYGROUP Consumer Group name already exists"
 }
 
-// Wrap errors with context information
+// Error severity levels - critical errors should stop processing
+type ErrorLevel int
+
+const (
+	ErrorLevelInfo ErrorLevel = iota
+	ErrorLevelWarning
+	ErrorLevelCritical
+)
+
+func (l ErrorLevel) String() string {
+	switch l {
+	case ErrorLevelInfo:
+		return "INFO"
+	case ErrorLevelWarning:
+		return "WARN"
+	case ErrorLevelCritical:
+		return "CRIT"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// Enhanced error with rich context information
 type RedisQueueError struct {
-	Op  string // operation name
-	Err error  // original error
+	Level     ErrorLevel             // error severity
+	Op        string                 // operation name
+	Stream    string                 // stream name (if applicable)
+	MessageID string                 // message ID (if applicable)
+	Context   map[string]interface{} // additional context
+	Err       error                  // original error
 }
 
 func (e *RedisQueueError) Error() string {
-	return fmt.Sprintf("redisqueue %s: %v", e.Op, e.Err)
+	msg := fmt.Sprintf("[%s] redisqueue %s", e.Level, e.Op)
+
+	if e.Stream != "" {
+		msg += fmt.Sprintf(" stream=%s", e.Stream)
+	}
+	if e.MessageID != "" {
+		msg += fmt.Sprintf(" msg_id=%s", e.MessageID)
+	}
+	if len(e.Context) > 0 {
+		msg += fmt.Sprintf(" ctx=%+v", e.Context)
+	}
+
+	return fmt.Sprintf("%s: %v", msg, e.Err)
 }
 
 func (e *RedisQueueError) Unwrap() error {
 	return e.Err
 }
 
-// Create error with context
+func (e *RedisQueueError) IsCritical() bool {
+	return e.Level == ErrorLevelCritical
+}
+
+// Create error with minimal context
 func NewError(op string, err error) *RedisQueueError {
-	return &RedisQueueError{Op: op, Err: err}
+	return &RedisQueueError{
+		Level: ErrorLevelWarning,
+		Op:    op,
+		Err:   err,
+	}
+}
+
+// Create error with full context
+func NewErrorWithContext(level ErrorLevel, op string, err error, stream, messageID string, ctx map[string]interface{}) *RedisQueueError {
+	return &RedisQueueError{
+		Level:     level,
+		Op:        op,
+		Stream:    stream,
+		MessageID: messageID,
+		Context:   ctx,
+		Err:       err,
+	}
 }

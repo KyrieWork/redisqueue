@@ -122,7 +122,7 @@ func (c *Consumer) Register(stream string, fn ConsumerFun) {
 // Run starts the consumer and blocks until shutdown
 func (c *Consumer) Run(ctx context.Context) {
 	if len(c.consumers) == 0 {
-		c.Errors <- ErrNoConsumers
+		c.reportCriticalError("validate_consumers", ErrNoConsumers)
 		return
 	}
 
@@ -130,7 +130,8 @@ func (c *Consumer) Run(ctx context.Context) {
 		c.streams = append(c.streams, stream)
 		err := c.redis.XGroupCreateMkStream(ctx, stream, c.options.GroupName, consumer.id).Err()
 		if err != nil && !IsGroupExistsError(err) {
-			c.Errors <- NewError("create_consumer_group", err)
+			c.reportError(ErrorLevelCritical, "create_consumer_group", err, stream, "",
+				map[string]interface{}{"group": c.options.GroupName})
 			return
 		}
 	}
@@ -157,6 +158,32 @@ func (c *Consumer) Run(ctx context.Context) {
 	}
 
 	c.wg.Wait()
+}
+
+// Unified error handling methods
+func (c *Consumer) reportError(level ErrorLevel, op string, err error, stream, messageID string, ctx map[string]interface{}) {
+	errorObj := NewErrorWithContext(level, op, err, stream, messageID, ctx)
+
+	// For critical errors, we might want to trigger shutdown
+	// For now, just send to error channel
+	select {
+	case c.Errors <- errorObj:
+	default:
+		// Error channel is full - this is bad!
+		// But don't block, just drop the error
+	}
+}
+
+func (c *Consumer) reportSimpleError(op string, err error) {
+	c.reportError(ErrorLevelWarning, op, err, "", "", nil)
+}
+
+func (c *Consumer) reportMessageError(op string, err error, stream, messageID string) {
+	c.reportError(ErrorLevelWarning, op, err, stream, messageID, nil)
+}
+
+func (c *Consumer) reportCriticalError(op string, err error) {
+	c.reportError(ErrorLevelCritical, op, err, "", "", nil)
 }
 
 // Shutdown gracefully stops the consumer

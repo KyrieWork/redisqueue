@@ -14,12 +14,12 @@ func (c *Consumer) work(ctx context.Context) {
 		case msg := <-c.queue:
 			err := c.process(msg)
 			if err != nil {
-				c.Errors <- NewError("process_message", err)
+				c.reportMessageError("process_message", err, msg.Stream, msg.ID)
 				continue
 			}
 			err = c.redis.XAck(ctx, msg.Stream, c.options.GroupName, msg.ID).Err()
 			if err != nil {
-				c.Errors <- NewError("ack_after_success", err)
+				c.reportMessageError("ack_after_success", err, msg.Stream, msg.ID)
 				continue
 			}
 		case <-ctx.Done():
@@ -33,10 +33,12 @@ func (c *Consumer) process(msg *Message) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if e, ok := r.(error); ok {
-				err = NewError("consumer_func_panic", e)
+				err = NewErrorWithContext(ErrorLevelCritical, "consumer_func_panic", e, msg.Stream, msg.ID,
+					map[string]interface{}{"panic_value": r})
 				return
 			}
-			err = NewError("consumer_func_panic", fmt.Errorf("panic: %v", r))
+			err = NewErrorWithContext(ErrorLevelCritical, "consumer_func_panic", fmt.Errorf("panic: %v", r),
+				msg.Stream, msg.ID, map[string]interface{}{"panic_value": r})
 		}
 	}()
 	err = c.consumers[msg.Stream].fn(msg)

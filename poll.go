@@ -29,7 +29,14 @@ func (c *Consumer) poll(ctx context.Context) {
 				if errors.Is(err, redis.Nil) {
 					continue
 				}
-				c.Errors <- NewError("read_stream", err)
+				// This is a serious error - Redis connection issues
+				c.reportError(ErrorLevelCritical, "read_stream", err, "", "",
+					map[string]interface{}{
+						"streams":     c.streams,
+						"group":       c.options.GroupName,
+						"consumer":    c.options.Name,
+						"buffer_size": c.options.BufferSize - len(c.queue),
+					})
 				continue
 			}
 

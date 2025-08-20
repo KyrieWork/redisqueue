@@ -37,7 +37,12 @@ func (c *Consumer) reclaim(ctx context.Context) {
 						Count:  int64(c.options.BufferSize - len(c.queue))},
 					).Result()
 					if err != nil && !errors.Is(err, redis.Nil) {
-						c.Errors <- NewError("list_pending_messages", err)
+						c.reportError(ErrorLevelWarning, "list_pending_messages", err, stream, "",
+							map[string]interface{}{
+								"group": c.options.GroupName,
+								"start": start,
+								"end":   end,
+							})
 						break
 					}
 					if len(res) == 0 {
@@ -54,13 +59,13 @@ func (c *Consumer) reclaim(ctx context.Context) {
 								Messages: []string{r.ID}},
 							).Result()
 							if err != nil && !errors.Is(err, redis.Nil) {
-								c.Errors <- NewError("claim_messages", err)
+								c.reportMessageError("claim_messages", err, stream, r.ID)
 							}
 
 							if errors.Is(err, redis.Nil) {
 								err = c.redis.XAck(ctx, stream, c.options.GroupName, r.ID).Err()
 								if err != nil {
-									c.Errors <- NewError("ack_after_failed_claim", err)
+									c.reportMessageError("ack_after_failed_claim", err, stream, r.ID)
 								}
 							}
 							c.enqueue(ctx, stream, claimres)
@@ -69,7 +74,7 @@ func (c *Consumer) reclaim(ctx context.Context) {
 
 					newID, err := incrementMessageID(res[len(res)-1].ID)
 					if err != nil {
-						c.Errors <- err
+						c.reportError(ErrorLevelWarning, "increment_message_id", err, stream, res[len(res)-1].ID, nil)
 						break
 					}
 
