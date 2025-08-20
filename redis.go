@@ -2,7 +2,6 @@ package redisqueue
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -52,7 +51,7 @@ func incrementMessageID(id string) (string, error) {
 	index := parts[1]
 	parsed, err := strconv.ParseInt(index, 10, 64)
 	if err != nil {
-		return "", errors.New(err.Error() + "\n" + fmt.Sprintf("error parsing message ID %q", id))
+		return "", NewError("parse_message_id", err)
 	}
 	return fmt.Sprintf("%s-%d", parts[0], parsed+1), nil
 }
