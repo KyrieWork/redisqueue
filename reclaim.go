@@ -69,6 +69,7 @@ func (c *Consumer) reclaim(ctx context.Context) {
 								}
 							}
 							c.enqueue(ctx, stream, claimres)
+							c.metrics.IncrementReclaimed()
 						}
 					}
 

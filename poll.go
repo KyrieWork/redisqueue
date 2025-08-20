@@ -42,6 +42,8 @@ func (c *Consumer) poll(ctx context.Context) {
 
 			for _, r := range res {
 				c.enqueue(ctx, r.Stream, r.Messages)
+				// Update queue depth metrics after enqueueing
+				c.metrics.SetQueueDepth(len(c.queue))
 			}
 		}
 	}

@@ -37,6 +37,9 @@ type Consumer struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	// Performance metrics
+	metrics *Metrics
 }
 
 // registeredConsumer holds a consumer function and its starting message ID
@@ -89,7 +92,7 @@ func NewConsumerOptions(opts *ConsumerOptions) (*Consumer, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &Consumer{
+	consumer := &Consumer{
 		Errors:    make(chan error),
 		options:   opts,
 		redis:     r,
@@ -98,9 +101,15 @@ func NewConsumerOptions(opts *ConsumerOptions) (*Consumer, error) {
 		queue:     make(chan *Message, opts.BufferSize),
 		wg:        &sync.WaitGroup{},
 
-		ctx:    ctx,
-		cancel: cancel,
-	}, nil
+		ctx:     ctx,
+		cancel:  cancel,
+		metrics: NewMetrics(),
+	}
+
+	// Set initial Redis connection status
+	consumer.metrics.SetRedisConnected(true)
+
+	return consumer, nil
 }
 
 // RegisterWithLastID registers a consumer function for a stream starting from a specific message ID
@@ -153,6 +162,9 @@ func (c *Consumer) Run(ctx context.Context) {
 
 	c.wg.Add(c.options.Concurrency)
 
+	// Set initial metrics
+	c.metrics.SetActiveWorkers(c.options.Concurrency)
+
 	for i := 0; i < c.options.Concurrency; i++ {
 		go c.work(c.ctx)
 	}
@@ -163,6 +175,9 @@ func (c *Consumer) Run(ctx context.Context) {
 // Unified error handling methods
 func (c *Consumer) reportError(level ErrorLevel, op string, err error, stream, messageID string, ctx map[string]interface{}) {
 	errorObj := NewErrorWithContext(level, op, err, stream, messageID, ctx)
+
+	// Update metrics
+	c.metrics.IncrementError(op)
 
 	// For critical errors, we might want to trigger shutdown
 	// For now, just send to error channel
@@ -184,6 +199,16 @@ func (c *Consumer) reportMessageError(op string, err error, stream, messageID st
 
 func (c *Consumer) reportCriticalError(op string, err error) {
 	c.reportError(ErrorLevelCritical, op, err, "", "", nil)
+}
+
+// GetMetrics returns a snapshot of current performance metrics
+func (c *Consumer) GetMetrics() *Metrics {
+	return c.metrics.GetSnapshot()
+}
+
+// GetMetricsJSON returns metrics as JSON string
+func (c *Consumer) GetMetricsJSON() (string, error) {
+	return c.metrics.ToJSON()
 }
 
 // Shutdown gracefully stops the consumer
