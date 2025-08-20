@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// Define our own error types to avoid those damn hardcoded strings
+// Common errors returned by redisqueue operations.
 var (
 	ErrNoConsumers      = errors.New("at least one consumer function needs to be registered")
 	ErrGroupExists      = errors.New("consumer group already exists")
@@ -14,22 +14,27 @@ var (
 	ErrInvalidMessageID = errors.New("invalid message ID format")
 )
 
-// Redis-specific error checking function
+// IsGroupExistsError checks if an error indicates a Redis consumer group already exists.
+// This handles Redis-specific error messages that may vary across versions.
 func IsGroupExistsError(err error) bool {
 	if err == nil {
 		return false
 	}
-	// Redis error messages might change, but keywords are more stable
 	errStr := err.Error()
 	return errStr == "BUSYGROUP Consumer Group name already exists"
 }
 
-// Error severity levels - critical errors should stop processing
+// ErrorLevel classifies errors by severity for appropriate handling and monitoring.
 type ErrorLevel int
 
 const (
+	// ErrorLevelInfo indicates informational messages for monitoring and debugging.
 	ErrorLevelInfo ErrorLevel = iota
+
+	// ErrorLevelWarning indicates recoverable errors that don't stop processing.
 	ErrorLevelWarning
+
+	// ErrorLevelCritical indicates severe errors that may require immediate attention.
 	ErrorLevelCritical
 )
 
@@ -46,14 +51,27 @@ func (l ErrorLevel) String() string {
 	}
 }
 
-// Enhanced error with rich context information
+// RedisQueueError provides detailed error information with contextual data
+// for debugging and monitoring. It wraps the original error with operation
+// details and relevant metadata.
 type RedisQueueError struct {
-	Level     ErrorLevel             // error severity
-	Op        string                 // operation name
-	Stream    string                 // stream name (if applicable)
-	MessageID string                 // message ID (if applicable)
-	Context   map[string]interface{} // additional context
-	Err       error                  // original error
+	// Level indicates the severity of the error
+	Level ErrorLevel
+
+	// Op identifies the operation that failed (e.g., "process_message", "claim_messages")
+	Op string
+
+	// Stream name where the error occurred (empty if not applicable)
+	Stream string
+
+	// MessageID of the message being processed when error occurred (empty if not applicable)
+	MessageID string
+
+	// Context contains additional debugging information specific to the error
+	Context map[string]interface{}
+
+	// Err is the underlying error that caused this failure
+	Err error
 }
 
 func (e *RedisQueueError) Error() string {
@@ -80,7 +98,8 @@ func (e *RedisQueueError) IsCritical() bool {
 	return e.Level == ErrorLevelCritical
 }
 
-// Create error with minimal context
+// NewError creates a RedisQueueError with Warning level and minimal context.
+// This is a convenience function for simple error wrapping.
 func NewError(op string, err error) *RedisQueueError {
 	return &RedisQueueError{
 		Level: ErrorLevelWarning,
@@ -89,7 +108,8 @@ func NewError(op string, err error) *RedisQueueError {
 	}
 }
 
-// Create error with full context
+// NewErrorWithContext creates a RedisQueueError with full contextual information.
+// Use this for detailed error reporting with stream, message, and operation context.
 func NewErrorWithContext(level ErrorLevel, op string, err error, stream, messageID string, ctx map[string]interface{}) *RedisQueueError {
 	return &RedisQueueError{
 		Level:     level,

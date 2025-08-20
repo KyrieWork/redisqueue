@@ -7,7 +7,8 @@ import (
 	"time"
 )
 
-// Metrics contains all performance metrics for the consumer
+// Metrics provides comprehensive performance and operational statistics for Redis queue consumers.
+// All counter fields use atomic operations for thread-safe access across multiple goroutines.
 type Metrics struct {
 	// Message processing metrics
 	MessagesProcessed int64 `json:"messages_processed"`
