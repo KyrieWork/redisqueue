@@ -45,6 +45,10 @@ func TestRedisQueueIntegration(t *testing.T) {
 	t.Run("Graceful Shutdown", func(t *testing.T) {
 		testGracefulShutdown(t, client)
 	})
+
+	t.Run("Task Tracking Integration", func(t *testing.T) {
+		testTaskTracking(t, client)
+	})
 }
 
 func testProducerConsumerFlow(t *testing.T, client *redis.Client) {
@@ -513,4 +517,199 @@ func BenchmarkMessageProcessing(b *testing.B) {
 	consumer.Shutdown()
 
 	b.Logf("Processed %d messages", processed)
+}
+
+func testTaskTracking(t *testing.T, client *redis.Client) {
+	const streamName = "task-stream"
+
+	// Create TaskTracker
+	tracker, err := NewTaskTrackerOptions(&TaskTrackerOptions{
+		RedisClient: client,
+		KeyPrefix:   "test-task:",
+		Expiration:  1 * time.Hour,
+	})
+	if err != nil {
+		t.Fatal("Failed to create task tracker:", err)
+	}
+
+	// Create Consumer with task tracking
+	consumer, err := NewConsumerOptions(&ConsumerOptions{
+		Name:        "task-consumer",
+		GroupName:   "task-group",
+		Concurrency: 2,
+		BufferSize:  10,
+		RedisClient: client,
+	})
+	if err != nil {
+		t.Fatal("Failed to create consumer:", err)
+	}
+
+	// Track processed tasks
+	processedTasks := make(map[string]bool)
+	var processMutex sync.Mutex
+
+	// Register consumer with task tracking
+	consumer.Register(streamName, func(msg *Message) error {
+		taskID, ok := msg.Values["task_id"].(string)
+		if !ok {
+			return fmt.Errorf("missing task_id in message")
+		}
+
+		ctx := context.Background()
+
+		// Update task to processing
+		if err := tracker.UpdateTaskStatus(ctx, taskID, TaskStatusProcessing); err != nil {
+			return fmt.Errorf("failed to update task status: %v", err)
+		}
+
+		// Simulate work with progress updates
+		for progress := 25; progress <= 100; progress += 25 {
+			if err := tracker.UpdateTaskProgress(ctx, taskID, progress); err != nil {
+				return fmt.Errorf("failed to update progress: %v", err)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		// Simulate failure for specific tasks
+		if taskID == "task-error" {
+			err := tracker.MarkTaskFailed(ctx, taskID, "simulated processing error")
+			if err != nil {
+				t.Logf("Failed to mark task as failed: %v", err)
+			}
+			return fmt.Errorf("simulated error for task %s", taskID)
+		}
+
+		// Mark as completed
+		if err := tracker.UpdateTaskStatus(ctx, taskID, TaskStatusCompleted); err != nil {
+			return fmt.Errorf("failed to mark task complete: %v", err)
+		}
+
+		processMutex.Lock()
+		processedTasks[taskID] = true
+		processMutex.Unlock()
+
+		return nil
+	})
+
+	// Start consumer
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		consumer.Run(ctx)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Create producer
+	producer, err := NewProducerOptions(&ProducerOptions{
+		RedisClient: client,
+	})
+	if err != nil {
+		t.Fatal("Failed to create producer:", err)
+	}
+
+	// Create and enqueue tasks
+	taskIDs := []string{"task-1", "task-2", "task-error", "task-3", "task-4"}
+
+	for _, taskID := range taskIDs {
+		// Create task in tracker
+		payload := map[string]interface{}{
+			"type": "test-task",
+			"data": fmt.Sprintf("data for %s", taskID),
+		}
+
+		err := tracker.CreateTask(ctx, taskID, streamName, payload)
+		if err != nil {
+			t.Fatal("Failed to create task:", err)
+		}
+
+		// Enqueue message
+		msg := &Message{
+			Stream: streamName,
+			Values: map[string]interface{}{
+				"task_id": taskID,
+				"type":    "test-task",
+			},
+		}
+
+		if err := producer.Enqueue(ctx, msg); err != nil {
+			t.Fatal("Failed to enqueue task message:", err)
+		}
+	}
+
+	// Wait for processing
+	time.Sleep(2 * time.Second)
+
+	// Validate task states
+	for _, taskID := range taskIDs {
+		task, err := tracker.GetTask(ctx, taskID)
+		if err != nil {
+			t.Errorf("Failed to get task %s: %v", taskID, err)
+			continue
+		}
+
+		if taskID == "task-error" {
+			if task.Status != TaskStatusFailed {
+				t.Errorf("Task %s should be failed, got %s", taskID, task.Status)
+			}
+			if task.Error == "" {
+				t.Errorf("Task %s should have error message", taskID)
+			}
+		} else {
+			if task.Status != TaskStatusCompleted {
+				t.Errorf("Task %s should be completed, got %s", taskID, task.Status)
+			}
+			if task.Progress != 100 {
+				t.Errorf("Task %s should have 100%% progress, got %d%%", taskID, task.Progress)
+			}
+		}
+
+		// Validate timestamps
+		if task.CreatedAt.IsZero() {
+			t.Errorf("Task %s should have created timestamp", taskID)
+		}
+		if task.StartedAt == nil {
+			t.Errorf("Task %s should have started timestamp", taskID)
+		}
+		if task.CompletedAt == nil {
+			t.Errorf("Task %s should have completed timestamp", taskID)
+		}
+	}
+
+	// Test status queries
+	completedTasks, err := tracker.ListTasksByStatus(ctx, TaskStatusCompleted, 10)
+	if err != nil {
+		t.Error("Failed to list completed tasks:", err)
+	}
+
+	expectedCompleted := 4 // task-1, task-2, task-3, task-4
+	if len(completedTasks) != expectedCompleted {
+		t.Errorf("Expected %d completed tasks, got %d", expectedCompleted, len(completedTasks))
+	}
+
+	failedTasks, err := tracker.ListTasksByStatus(ctx, TaskStatusFailed, 10)
+	if err != nil {
+		t.Error("Failed to list failed tasks:", err)
+	}
+
+	if len(failedTasks) != 1 {
+		t.Errorf("Expected 1 failed task, got %d", len(failedTasks))
+	} else if failedTasks[0] != "task-error" {
+		t.Errorf("Expected task-error in failed tasks, got %s", failedTasks[0])
+	}
+
+	// Test quick status check
+	status, err := tracker.GetTaskStatus(ctx, "task-1")
+	if err != nil {
+		t.Error("Failed to get task status:", err)
+	}
+	if status != TaskStatusCompleted {
+		t.Errorf("Expected task-1 to be completed, got %s", status)
+	}
+
+	t.Logf("Task tracking test completed successfully")
+	t.Logf("Processed tasks: %d, Failed tasks: %d", len(completedTasks), len(failedTasks))
+
+	consumer.Shutdown()
 }

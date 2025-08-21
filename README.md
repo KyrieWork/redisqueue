@@ -1,12 +1,13 @@
 # RedisQueue
 
-A production-ready Redis Streams consumer/producer with automatic error recovery, message reclaiming, and comprehensive performance monitoring.
+A production-ready Redis Streams consumer/producer with automatic error recovery, message reclaiming, task status tracking, and comprehensive performance monitoring.
 
 ## Features
 
 - **Bulletproof Error Handling**: 3-level error classification with rich context
 - **Auto Message Recovery**: Automatic reclaiming of abandoned messages  
 - **Performance Monitoring**: 13 comprehensive metrics with JSON export
+- **Task Status Tracking**: Redis-backed task state management with progress updates
 - **Graceful Shutdown**: Context-driven cancellation across all goroutines
 - **Zero Configuration**: Sensible defaults that just work
 
@@ -98,6 +99,47 @@ json, _ := consumer.GetMetricsJSON()
 log.Println(json)
 ```
 
+### Task Status Tracking
+
+```go
+// Create task tracker
+tracker, err := redisqueue.NewTaskTracker()
+if err != nil {
+    panic(err)
+}
+
+// Create a task with status tracking
+taskID := "user-signup-12345"
+payload := map[string]interface{}{
+    "user_id": "12345",
+    "email": "user@example.com",
+}
+
+// Create task (status: queued)
+err = tracker.CreateTask(ctx, taskID, "signup-tasks", payload)
+
+// Consumer with task tracking
+consumer.Register("signup-tasks", func(msg *redisqueue.Message) error {
+    taskID := msg.Values["task_id"].(string)
+    
+    // Update to processing
+    tracker.UpdateTaskStatus(ctx, taskID, redisqueue.TaskStatusProcessing)
+    
+    // Update progress
+    tracker.UpdateTaskProgress(ctx, taskID, 50)
+    
+    // Do actual work...
+    
+    // Mark complete
+    tracker.UpdateTaskStatus(ctx, taskID, redisqueue.TaskStatusCompleted)
+    return nil
+})
+
+// Query task status anytime
+status, err := tracker.GetTaskStatus(ctx, taskID)
+task, err := tracker.GetTask(ctx, taskID) // Full task info
+```
+
 ## Configuration
 
 ```go
@@ -131,6 +173,7 @@ This library was built for production workloads. It handles:
 
 - Redis connection failures with automatic retry
 - Message processing failures with proper error tracking
+- Task status persistence with automatic cleanup of old tasks
 - Memory management with configurable buffer sizes
 - Graceful shutdown with in-flight message completion
 - Comprehensive metrics for monitoring and alerting
