@@ -1,4 +1,4 @@
-module redisqueue
+module github.com/KyrieWork/redisqueue
 
 go 1.24.1
 
